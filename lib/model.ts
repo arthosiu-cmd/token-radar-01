@@ -43,16 +43,16 @@
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
-  slug: string;
-  name: string;
-  category: string | null;
-  chains: string[];
-  tvl_usd: number;
-  change_7d: number | null;
-  mcap_usd: number | null;
-  listed_at: string | null;
-  gecko_id: string | null;
-  symbol: string | null;
+  slug: string; // the protocol's URL slug, the board's key
+  name: string; // the display name, as the snapshot spells it
+  category: string | null; // DefiLlama's category, or null when uncategorised
+  chains: string[]; // the chains the protocol runs on, in snapshot order
+  tvl_usd: number; // total value locked in USD, the model's base
+  change_7d: number | null; // the seven-day TVL change in per cent, or null
+  mcap_usd: number | null; // the token's market cap, or null when pre-token
+  listed_at: string | null; // the listing date (YYYY-MM-DD), or null when unknown
+  gecko_id: string | null; // the CoinGecko id, or null when pre-token
+  symbol: string | null; // the token symbol, or null when pre-token
 }
 
 /** The whole snapshot document. */
@@ -342,6 +342,16 @@ function secondChainOf(p: SnapshotProtocol): string | null {
   return second === undefined ? null : second;
 }
 
+/**
+ * The farm plan's money and time come from two small tier tables, not from
+ * a hand-written list of names. Capital follows TVL: a protocol locking
+ * $5B or more gets a $500 position, $1B or more gets $250, $100M or more
+ * gets $150, and anything smaller gets $75. The hold follows age: a
+ * protocol younger than 180 days is held 60 days, younger than a year
+ * 45 days, and anything older 30 days; an unknown age holds 30 days.
+ * The tables keep the plan's figures in one place, so a change to the
+ * tiers changes every row the same way.
+ */
 /** How much capital one farm position needs, from the protocol's own TVL. */
 function capitalFor(p: SnapshotProtocol): number {
   const tiers: Array<[number, number]> = [
