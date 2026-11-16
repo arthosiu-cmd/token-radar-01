@@ -317,39 +317,54 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
   }));
 }
 
-const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
+/** A number rounded to four decimals, for the model's multipliers in the board. */
+function round4(n: number): number {
+  return Math.round(n * 1e4) / 1e4;
+}
 
 /** A step as one string: its action, then its cost and time, within the gate's 20..600 characters. */
 export function stepText(step: FarmStep): string {
-  let s = `${step.text} Cost: ${step.cost}. Time: ${step.time}.`;
-  if (s.length > 600) s = `${s.slice(0, 596)}...`;
-  if (s.length < 20) s = `${s} Hold the position and check the protocol's own page.`;
-  return s;
+  const full = `${step.text} Cost: ${step.cost}. Time: ${step.time}.`;
+  if (full.length > 600) return `${full.slice(0, 596)}...`;
+  if (full.length < 20) return `${full} Hold the position and check the protocol's own page.`;
+  return full;
 }
 
 /** The first chain a protocol names, or a neutral phrase. */
 function chainOf(p: SnapshotProtocol): string {
-  return p.chains.length > 0 ? p.chains[0]! : 'its main chain';
+  const first = p.chains[0];
+  return first === undefined ? 'its main chain' : first;
 }
 
 /** A second chain when the protocol runs on more than one, else null. */
 function secondChainOf(p: SnapshotProtocol): string | null {
-  return p.chains.length > 1 ? p.chains[1]! : null;
+  const second = p.chains[1];
+  return second === undefined ? null : second;
 }
 
 /** How much capital one farm position needs, from the protocol's own TVL. */
 function capitalFor(p: SnapshotProtocol): number {
-  if (p.tvl_usd >= 5_000_000_000) return 500;
-  if (p.tvl_usd >= 1_000_000_000) return 250;
-  if (p.tvl_usd >= 100_000_000) return 150;
+  const tiers: Array<[number, number]> = [
+    [5_000_000_000, 500],
+    [1_000_000_000, 250],
+    [100_000_000, 150],
+  ];
+  for (const [floor, capital] of tiers) {
+    if (p.tvl_usd >= floor) return capital;
+  }
   return 75;
 }
 
 /** How long to hold, from the protocol's age: younger protocols get a longer qualifying window. */
 function holdDaysFor(age: number | null): number {
   if (age === null) return 30;
-  if (age < 180) return 60;
-  if (age < 365) return 45;
+  const windows: Array<[number, number]> = [
+    [180, 60],
+    [365, 45],
+  ];
+  for (const [under, days] of windows) {
+    if (age < under) return days;
+  }
   return 30;
 }
 
