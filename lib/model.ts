@@ -528,6 +528,65 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
   return { board, radar };
 }
 
+/** The document's as_of date, or a refusal. */
+function snapshotDate(doc: Record<string, unknown>): string {
+  if (typeof doc.as_of !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(doc.as_of)) {
+    throw new SnapshotError('snapshot.json has no as_of date');
+  }
+  return doc.as_of;
+}
+
+/** The document's source string, or a refusal. */
+function snapshotSource(doc: Record<string, unknown>): string {
+  if (typeof doc.source !== 'string') throw new SnapshotError('snapshot.json has no source');
+  return doc.source;
+}
+
+/** The document's watchlist floor in USD, or a refusal. */
+function snapshotFloor(doc: Record<string, unknown>): number {
+  if (typeof doc.floor_usd !== 'number' || !Number.isSafeInteger(doc.floor_usd) || doc.floor_usd <= 0) {
+    throw new SnapshotError('snapshot.json has no floor_usd');
+  }
+  return doc.floor_usd;
+}
+
+/** One protocol entry out of the document's raw value, or a refusal naming its index. */
+function snapshotProtocol(value: unknown, index: number): SnapshotProtocol {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new SnapshotError(`snapshot.json's protocol ${index} is not an object`);
+  }
+  const p = value as Record<string, unknown>;
+  if (typeof p.slug !== 'string' || typeof p.name !== 'string' || typeof p.tvl_usd !== 'number' || !Number.isFinite(p.tvl_usd)) {
+    throw new SnapshotError(`snapshot.json's protocol ${index} lacks a slug, a name or a TVL`);
+  }
+  return {
+    slug: p.slug,
+    name: p.name,
+    category: typeof p.category === 'string' ? p.category : null,
+    chains: Array.isArray(p.chains) ? p.chains.filter((c): c is string => typeof c === 'string') : [],
+    tvl_usd: p.tvl_usd,
+    change_7d: typeof p.change_7d === 'number' && Number.isFinite(p.change_7d) ? p.change_7d : null,
+    mcap_usd: typeof p.mcap_usd === 'number' && Number.isFinite(p.mcap_usd) ? p.mcap_usd : null,
+    listed_at: typeof p.listed_at === 'string' ? p.listed_at : null,
+    gecko_id: typeof p.gecko_id === 'string' ? p.gecko_id : null,
+    symbol: typeof p.symbol === 'string' ? p.symbol : null,
+  };
+}
+
+/** The document's protocols array, or a refusal. */
+function snapshotProtocols(doc: Record<string, unknown>): SnapshotProtocol[] {
+  if (!Array.isArray(doc.protocols)) throw new SnapshotError('snapshot.json has no protocols array');
+  return doc.protocols.map((v, i) => snapshotProtocol(v, i));
+}
+
+/** The document's watchlist of slugs, or a refusal. */
+function snapshotWatchlist(doc: Record<string, unknown>): string[] {
+  if (!Array.isArray(doc.watchlist) || doc.watchlist.some((s) => typeof s !== 'string')) {
+    throw new SnapshotError('snapshot.json has no watchlist of slugs');
+  }
+  return doc.watchlist as string[];
+}
+
 /** The snapshot out of a file's text, refused unless it is the shape the model scores. */
 export function parseSnapshot(text: string): Snapshot {
   let raw: unknown;
@@ -536,52 +595,51 @@ export function parseSnapshot(text: string): Snapshot {
   } catch {
     throw new SnapshotError('snapshot.json is not JSON');
   }
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new SnapshotError('snapshot.json is not a JSON object');
-  const o = raw as Record<string, unknown>;
-  if (typeof o.as_of !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(o.as_of)) throw new SnapshotError('snapshot.json has no as_of date');
-  if (typeof o.source !== 'string') throw new SnapshotError('snapshot.json has no source');
-  if (typeof o.floor_usd !== 'number' || !Number.isSafeInteger(o.floor_usd) || o.floor_usd <= 0) throw new SnapshotError('snapshot.json has no floor_usd');
-  if (!Array.isArray(o.protocols)) throw new SnapshotError('snapshot.json has no protocols array');
-  if (!Array.isArray(o.watchlist) || o.watchlist.some((s) => typeof s !== 'string')) throw new SnapshotError('snapshot.json has no watchlist of slugs');
-  const protocols = o.protocols.map((v, i) => {
-    if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new SnapshotError(`snapshot.json's protocol ${i} is not an object`);
-    const p = v as Record<string, unknown>;
-    if (typeof p.slug !== 'string' || typeof p.name !== 'string' || typeof p.tvl_usd !== 'number' || !Number.isFinite(p.tvl_usd)) {
-      throw new SnapshotError(`snapshot.json's protocol ${i} lacks a slug, a name or a TVL`);
-    }
-    return {
-      slug: p.slug,
-      name: p.name,
-      category: typeof p.category === 'string' ? p.category : null,
-      chains: Array.isArray(p.chains) ? p.chains.filter((c): c is string => typeof c === 'string') : [],
-      tvl_usd: p.tvl_usd,
-      change_7d: typeof p.change_7d === 'number' && Number.isFinite(p.change_7d) ? p.change_7d : null,
-      mcap_usd: typeof p.mcap_usd === 'number' && Number.isFinite(p.mcap_usd) ? p.mcap_usd : null,
-      listed_at: typeof p.listed_at === 'string' ? p.listed_at : null,
-      gecko_id: typeof p.gecko_id === 'string' ? p.gecko_id : null,
-      symbol: typeof p.symbol === 'string' ? p.symbol : null,
-    };
-  });
-  return {
-    as_of: o.as_of,
-    source: o.source,
-    floor_usd: o.floor_usd,
-    protocols,
-    watchlist: o.watchlist as string[],
-  };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new SnapshotError('snapshot.json is not a JSON object');
+  }
+  const doc = raw as Record<string, unknown>;
+  const asOf = snapshotDate(doc);
+  const source = snapshotSource(doc);
+  const floor = snapshotFloor(doc);
+  const protocols = snapshotProtocols(doc);
+  const watchlist = snapshotWatchlist(doc);
+  return { as_of: asOf, source, floor_usd: floor, protocols, watchlist };
 }
 
-/** Why a board is not one the gate will take, or null: coverage, ranks, order, one shared implied value, and farm steps. */
-export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null {
+/** The watchlist slugs the board does not cover, or null. */
+function coverageIssue(board: BoardRow[], snapshot: Snapshot): string | null {
   const slugs = new Set(board.map((r) => r.slug));
   const missing = snapshot.watchlist.filter((s) => !slugs.has(s));
-  if (missing.length > 0) return `the board misses ${missing.length} watchlist slug${missing.length === 1 ? '' : 's'}: ${missing.slice(0, 5).join(', ')}`;
+  if (missing.length === 0) return null;
+  return `the board misses ${missing.length} watchlist slug${missing.length === 1 ? '' : 's'}: ${missing.slice(0, 5).join(', ')}`;
+}
+
+/** The first rank that is not its position, or null. */
+function rankIssue(board: BoardRow[]): string | null {
   const ranks = board.map((r) => r.rank).sort((a, b) => a - b);
   for (let i = 0; i < ranks.length; i++) if (ranks[i] !== i + 1) return `rank ${i + 1} is ${ranks[i]}`;
-  for (let i = 1; i < board.length; i++) if (board[i]!.implied_value_usd > board[i - 1]!.implied_value_usd) return `row ${i + 1} outranks row ${i} on implied value`;
+  return null;
+}
+
+/** The first row that outranks the row before it, or null. */
+function orderIssue(board: BoardRow[]): string | null {
+  for (let i = 1; i < board.length; i++) {
+    if (board[i]!.implied_value_usd > board[i - 1]!.implied_value_usd) return `row ${i + 1} outranks row ${i} on implied value`;
+  }
+  return null;
+}
+
+/** The refusal when every row shares one implied value, or null. */
+function sharedValueIssue(board: BoardRow[]): string | null {
   if (board.length >= 2 && board[0]!.implied_value_usd === board[board.length - 1]!.implied_value_usd) {
     return `all ${board.length} rows share the same implied value $${board[0]!.implied_value_usd}: a board that ranks nothing by value is not a ranking`;
   }
+  return null;
+}
+
+/** The first row whose farm steps break the gate, or null. */
+function stepsIssue(board: BoardRow[]): string | null {
   for (const r of board) {
     const steps = r.farm_steps;
     if (steps.length < 3 || steps.length > 12) return `${r.slug} has ${steps.length} farm steps`;
@@ -589,6 +647,11 @@ export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null
     if (!Number.isSafeInteger(r.implied_value_usd) || r.implied_value_usd <= 0) return `${r.slug} has implied value ${r.implied_value_usd}`;
   }
   return null;
+}
+
+/** Why a board is not one the gate will take, or null: coverage, ranks, order, one shared implied value, and farm steps. */
+export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null {
+  return coverageIssue(board, snapshot) ?? rankIssue(board) ?? orderIssue(board) ?? sharedValueIssue(board) ?? stepsIssue(board);
 }
 
 /** A compact data.js: the dashboard's whole dataset as one script, no fetch and no network. */
