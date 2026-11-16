@@ -1,11 +1,12 @@
 // Token radar: the entrypoint for the make.fun token-radar-01 bounty.
 //
 // It reads the sealed DefiLlama snapshot, scores every pre-token protocol
-// with the radar-3 model in lib/model.ts, and writes the ranked board,
-// the dashboard data, the dashboard files, the screenshots and the
-// dossier the judge reads. Everything is standard library only, and the
-// run is deterministic: the same snapshot always yields the same board,
-// data and dossier.
+// with the radar-4 model in lib/model.ts — the size curve is fit at run time
+// from the snapshot's own comparables, with a fallback to the radar-3 constants —
+// and writes the ranked board, the dashboard data, the dashboard files, the
+// screenshots and the dossier the judge reads. Everything is standard library
+// only, and the run is deterministic: the same snapshot always yields the same
+// board, data and dossier.
 //
 // Usage outside the grader's container, where /input is not mounted:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json

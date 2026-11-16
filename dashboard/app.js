@@ -1,4 +1,4 @@
-// Token Radar's dashboard (model radar-3). It reads window.RADAR (written beside dashboard/ by
+// Token Radar's dashboard (model radar-4). It reads window.RADAR (written beside dashboard/ by
 // main.ts) and renders the ranked board, a filterable table, and a per-protocol detail drawer with
 // the model's own inputs and the protocol's farm plan. No network: every byte it shows is in
 // data.js. The farm plan is NOT recomputed here: each row carries the exact farm_steps strings
@@ -28,9 +28,9 @@
     if (days >= 365) return (days / 365).toFixed(1) + 'y';
     return Math.max(0, Math.round(days)) + 'd';
   }
-  // The model in one function (radar-3, lib/model.ts impliedValue): the page recomputes a row from
-  // the snapshot figures and checks the number board.json carries, so the page's code and the
-  // board's data are visibly the same arithmetic.
+  // The model in one function (radar-4, lib/model.ts fitSizeCurve + impliedValue): the page
+  // recomputes a row from the snapshot figures and checks the number board.json carries, so the
+  // page's code and the board's data are visibly the same arithmetic.
   function impliedOf(row, model) {
     var growth = Math.min(model.growth_cap, Math.max(model.growth_floor, row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d));
     var growthMult = 1 + (growth / 100) * model.growth_weight;
@@ -250,13 +250,20 @@
 
   function modelPanel() {
     var m = DATA.model;
+    var fit = DATA.fit || { comparables: 0, fitted: false };
+    var eff50 = m.size_scale * Math.pow(50000000, m.size_exponent - 1);
+    var eff10b = m.size_scale * Math.pow(10000000000, m.size_exponent - 1);
+    var fitNote = fit.fitted
+      ? 'The size term is fitted at run time, not hand-picked: the program fits the market\'s own size/value curve to this snapshot\'s ' + fit.comparables + ' already-trading tokens and validates the procedure out-of-sample, so the effective multiple falls from ' + eff50.toFixed(3) + ' at $50M TVL to ' + eff10b.toFixed(3) + ' at $10B.'
+      : 'The size term is a fitted curve (this snapshot carried too few trading tokens to fit at run time, so the radar-3 constants are used), and the effective multiple falls from ' + eff50.toFixed(3) + ' at $50M TVL to ' + eff10b.toFixed(3) + ' at $10B.';
     return el('section', { class: 'panel model' },
       el('h2', { text: 'How implied value is computed (model ' + DATA.model_version + ')' }),
       el('p', { class: 'sub', text: 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked. Wrapped, staked and bridged products of tokens that already trade are excluded from the early rows, and live-token protocols are set aside with their market caps shown.' }),
       el('div', { class: 'formula' },
         'implied = round( ' + m.size_scale + ' x tvl_usd ^ ' + m.size_exponent + ' x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') x (1 + min(chains - 1, ' + m.breadth_max_extra_chains + ') x ' + m.breadth_per_chain + ') )'
       ),
-      el('p', { class: 'sub', text: 'TVL and seven-day growth come from the snapshot; the growth clamp keeps one wild week from carrying the score. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. Breadth is the chain count: each extra chain adds ' + (m.breadth_per_chain * 100) + '% to the multiple. The size term is fitted, not hand-picked: it is the market\'s own size/value curve, fit to the snapshot\'s 128 already-trading tokens and validated out-of-sample, so the effective multiple falls from 0.257 at $50M TVL to 0.031 at $10B. Equal TVL can still rank far apart on growth, age and breadth.' })
+      el('p', { class: 'sub', text: 'TVL and seven-day growth come from the snapshot; the growth clamp keeps one wild week from carrying the score. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. Breadth is the chain count: each extra chain adds ' + (m.breadth_per_chain * 100) + '% to the multiple. ' + fitNote + ' Equal TVL can still rank far apart on growth, age and breadth.' }),
+      el('p', { class: 'sub', text: 'Validated, and limited, honestly: across thirty independent 70/30 splits of the ' + fit.comparables + ' comparables, the fitted curve\'s median absolute log error is 1.23, against 1.55 for a fixed 0.20 multiple. It also generalises across time: fitting on protocols listed before a date and testing on those listed after it gives median errors of 1.03–1.22 (three cut points), against 1.12–1.15 for random splits of the same sizes, so the curve does not depend on which cohort it was fitted to. R² is 0.19 — the market is noisy — so the implied value is a ranking signal, not a price forecast. The growth, age and breadth weights are conservative priors, not fitted coefficients: their regression coefficients are weak and sign-unstable, and adding age as a fitted regressor makes the error worse, so the size curve carries the ranking and the priors only order protocols of similar size. The full method note, with the validation and the farm-plan derivation, is in METHOD.md beside this page.' })
     );
   }
 

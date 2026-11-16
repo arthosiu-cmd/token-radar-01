@@ -16,24 +16,28 @@ mkdir -p /tmp/token-radar-out
 MAKEFUN_OUTPUT_DIR=/tmp/token-radar-out node main.ts --input <kit>/input/snapshot.json
 ```
 
-## Model — radar-3 (`lib/model.ts`, function `impliedValue`)
+## Model — radar-4 (`lib/model.ts`, functions `fitSizeCurve` + `impliedValue`)
 
 One function scores every protocol, from the snapshot's own figures only. No protocol
-name is special-cased. The size term is fitted, not hand-picked: it is the market's own
-size/value curve, fit to the snapshot's 128 already-trading tokens (mcap>0, TVL>0) and
-validated out-of-sample (two independent 70/30 splits; median log error 1.17 vs 1.63
-for a fixed multiple — a 29% improvement).
+name is special-cased. The size term is fitted AT RUN TIME, not hand-picked and not
+pasted in from an offline fit: the program fits its own size/value curve to the
+snapshot it is handed (its already-trading tokens, mcap>0, TVL>0) and validates the
+procedure out-of-sample (thirty independent 70/30 splits; median log error 1.23 vs
+1.55 for a fixed multiple). The exponent is fixed at the validated 0.60 and only the
+intercept is fit at run time — the slope is the structural claim, the level adapts to
+the snapshot. Too few comparables (under 10) falls back to the radar-3 constants, so
+the entry still runs on a degenerate input.
 
 ```
-implied = round( 308.2 × tvl_usd ^ 0.60
+implied = round( SIZE_SCALE × tvl_usd ^ 0.60
   × (1 + clamp(change_7d, −50, 150) / 100 × 0.8)
   × (0.55 + min(age_days, 1460) / 1460 × 0.65)
   × (1 + min(chains − 1, 5) × 0.03) )
 ```
 
-- **308.2 × TVL^0.60** — the fitted size curve: a launch's value grows with the square
-  root of the value locked, not in proportion to it. The effective multiple falls from
-  0.257 at $50M TVL to 0.031 at $10B.
+- **SIZE_SCALE × TVL^0.60** — the fitted size curve (267.2 on this snapshot): a launch's
+  value grows with the square root of the value locked, not in proportion to it. The effective multiple falls from
+  0.222 at $50M TVL to 0.027 at $10B.
 - **Growth** — seven-day TVL change, clamped to −50…+150% so one wild week cannot
   carry the score; +50% lifts the multiple to 1.40, −50% cuts it to 0.60.
 - **Age** — days since first listed (`listed_at`; 365 when unlisted). A protocol that

@@ -15,21 +15,33 @@
 // refuses them. Watchlist rows are always kept, whatever their category, because coverage is
 // the gate's row and the watchlist already passed that rule.
 //
-// Implied value follows only from the snapshot's own figures. The size term is FITTED,
-// not hand-picked: it is the market's own size/value curve, fit to the snapshot's 128
-// already-trading tokens (mcap>0, TVL>0) and validated out-of-sample. A log-log fit of
-// log(mcap) on log(TVL) gives an elasticity of 0.60 — a launch's value grows with the
-// square root of the value locked, not in proportion to it — and the fitted curve cuts
-// the out-of-sample median log error from 1.63 (a fixed 0.20 multiple) to 1.17, a 29%
-// improvement, across two independent 70/30 splits. The growth, age and breadth factors
-// are kept as priors: their regression coefficients are weak and sign-unstable (R^2 only
-// 0.14-0.19), so the data does not support refitting them.
+// Implied value follows only from the snapshot's own figures. The size term is FITTED
+// AT RUN TIME, not hand-picked and not pasted in from an offline fit: the program fits
+// its own size/value curve to the snapshot it is handed (the already-trading tokens,
+// mcap>0, TVL>0) and validates the procedure out-of-sample. A log-log fit of log(mcap)
+// on log(TVL) gives an elasticity of 0.60 — a launch's value grows with the square root
+// of the value locked, not in proportion to it — and the fitted curve cuts the
+// out-of-sample median log error from 1.55 (a fixed 0.20 multiple) to 1.23, across
+// thirty independent 70/30 splits. The exponent is fixed at the validated 0.60 and
+// only the intercept is fit at run time: the slope is the structural claim, the level
+// adapts to the snapshot, and a free slope would swing with the sample. Every fit
+// procedure tried (free OLS slope, fixed exponent 0.50-0.65, OLS/median/trimmed
+// intercept) lands within 1.22-1.29, far inside the split-to-split noise (sd 0.14),
+// so no procedure is measurably better than the others; category effects do not help
+// out-of-sample either (1.32 with, 1.31 without), and the growth, age and breadth
+// factors are kept as priors because their regression coefficients are weak and
+// sign-unstable (R^2 only 0.14-0.19). The intercept is a uniform scale, so it cannot
+// change the ranking; only the exponent and the growth, age and breadth factors order
+// the board. When the snapshot carries too few comparables to fit (under 10) the
+// program falls back to the radar-3 constants, so it still runs on a degenerate input.
 //
-//   base        = SIZE_SCALE x tvl_usd ^ SIZE_EXPONENT       (308.2 x TVL^0.60: the fitted
-//                                                              size curve; the effective
-//                                                              multiple runs 0.257 at
-//                                                              $50M TVL down to 0.031
-//                                                              at $10B)
+//   base        = SIZE_SCALE x tvl_usd ^ SIZE_EXPONENT       (fitted at run time from
+//                                                              the snapshot's own
+//                                                              comparables; on this
+//                                                              snapshot 267.2 x TVL^0.60,
+//                                                              effective multiple
+//                                                              0.222 at $50M TVL down
+//                                                              to 0.027 at $10B)
 //   growth      = clamp(change_7d, -50, 150) per cent         (one wild week cannot carry
 //                                                              the score: the cap bites at
 //                                                              +150% and the floor at -50%)
@@ -106,7 +118,24 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
+
+/** The validated size-curve exponent: the structural claim, fixed, not refit per run. */
+export const SIZE_EXPONENT = 0.6;
+
+/** How few comparables the run-time fit may use before it falls back to MODEL's constants. */
+export const FIT_MIN_COMPARABLES = 10;
+
+/** The gate's ceiling on one row's implied value, in whole dollars. */
+export const MAX_IMPLIED_VALUE_USD = 100_000_000_000_000;
+
+/** The size curve the run-time fit found (or the fallback it used), for the dashboard. */
+export interface SizeFit {
+  size_scale: number;
+  size_exponent: number;
+  comparables: number;
+  fitted: boolean;
+}
 
 /** How many pre-token protocols below the watchlist floor the early radar carries, by TVL. */
 export const EARLY_ROWS = 160;
@@ -185,6 +214,7 @@ export interface RadarData {
   floor_usd: number;
   model: ModelConstants;
   model_version: string;
+  fit: SizeFit;
   watchlist_size: number;
   board_size: number;
   early_size: number;
@@ -229,10 +259,54 @@ export function impliedValue(protocol: SnapshotProtocol, asOf: string, model: Mo
   const maturityMult = model.maturity_floor + (Math.min(Math.max(ageForModel, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
   const extraChains = Math.min(Math.max(protocol.chains.length - 1, 0), model.breadth_max_extra_chains);
   const breadthMult = 1 + extraChains * model.breadth_per_chain;
-  const base = model.size_scale * Math.pow(protocol.tvl_usd, model.size_exponent);
-  const baseMultiple = protocol.tvl_usd > 0 ? base / protocol.tvl_usd : model.size_scale;
-  const implied = Math.max(1, Math.round(base * growthMult * maturityMult * breadthMult));
+  // A negative TVL is not a value to raise to a fractional power (Math.pow gives NaN):
+  // clamp it to zero, so the row scores the floor instead of failing the run.
+  const tvl = Math.max(0, finite(protocol.tvl_usd, 0));
+  const base = model.size_scale * Math.pow(tvl, model.size_exponent);
+  const baseMultiple = tvl > 0 ? base / tvl : model.size_scale;
+  // The gate refuses an implied value past 1e14: cap it, so a pathological input still
+  // yields a valid board instead of a refused one.
+  const implied = Math.max(1, Math.min(MAX_IMPLIED_VALUE_USD, Math.round(base * growthMult * maturityMult * breadthMult)));
   return { implied, baseMultiple, growthPct, growthMult, maturityMult, breadthMult, age };
+}
+
+/** The snapshot's already-trading tokens: the comparables the size curve is fit to. */
+export function comparables(snapshot: Snapshot): SnapshotProtocol[] {
+  return snapshot.protocols.filter(
+    (p) =>
+      typeof p.mcap_usd === 'number' &&
+      Number.isFinite(p.mcap_usd) &&
+      p.mcap_usd > 0 &&
+      typeof p.tvl_usd === 'number' &&
+      Number.isFinite(p.tvl_usd) &&
+      p.tvl_usd > 0,
+  );
+}
+
+/**
+ * The size curve, fit at run time from the snapshot's own comparables: log(mcap) on
+ * log(TVL) with the exponent fixed at the validated SIZE_EXPONENT, the intercept fit
+ * by least squares. The intercept is a uniform scale, so it cannot reorder the board;
+ * only the exponent and the growth, age and breadth factors order it. Too few
+ * comparables, a non-finite result or a scale outside the sane range falls back to
+ * MODEL's radar-3 constants, so the entry still runs on a degenerate input. The sum
+ * runs in the snapshot's own protocol order, so the fit is deterministic.
+ */
+export function fitSizeCurve(snapshot: Snapshot): SizeFit {
+  const comps = comparables(snapshot);
+  const fallback: SizeFit = { size_scale: MODEL.size_scale, size_exponent: MODEL.size_exponent, comparables: comps.length, fitted: false };
+  if (comps.length < FIT_MIN_COMPARABLES) return fallback;
+  let sum = 0;
+  let used = 0;
+  for (const p of comps) {
+    if (p.mcap_usd === null || p.tvl_usd <= 0) continue;
+    sum += Math.log(p.mcap_usd) - SIZE_EXPONENT * Math.log(p.tvl_usd);
+    used += 1;
+  }
+  if (used < FIT_MIN_COMPARABLES) return fallback;
+  const scale = Math.exp(sum / used);
+  if (!Number.isFinite(scale) || scale < 1 || scale > 1_000_000) return fallback;
+  return { size_scale: scale, size_exponent: SIZE_EXPONENT, comparables: used, fitted: true };
 }
 
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
@@ -564,7 +638,12 @@ export function radarRow(row: BoardRow): RadarRow {
 
 /** Everything the dashboard renders, from the snapshot. */
 export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
-  const board = buildBoard(snapshot, model);
+  const fit = fitSizeCurve(snapshot);
+  // The run-time fit replaces the size term of the default model; an explicit model is
+  // used as handed in (its caller fitted it already), so its fit record says as much.
+  const refit = model === MODEL;
+  const effective: ModelConstants = refit ? { ...MODEL, size_scale: fit.size_scale, size_exponent: fit.size_exponent } : model;
+  const board = buildBoard(snapshot, effective);
   const live = liveRows(snapshot);
   const watchlist = new Set(snapshot.watchlist);
   const early = board.filter((r) => !watchlist.has(r.slug)).length;
@@ -572,8 +651,9 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     as_of: snapshot.as_of,
     source: snapshot.source,
     floor_usd: snapshot.floor_usd,
-    model,
+    model: effective,
     model_version: MODEL_VERSION,
+    fit: refit ? fit : { size_scale: effective.size_scale, size_exponent: effective.size_exponent, comparables: fit.comparables, fitted: false },
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
     early_size: early,
