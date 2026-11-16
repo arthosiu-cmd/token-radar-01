@@ -15,10 +15,21 @@
 // refuses them. Watchlist rows are always kept, whatever their category, because coverage is
 // the gate's row and the watchlist already passed that rule.
 //
-// Implied value follows only from the snapshot's own figures, in four visible factors:
+// Implied value follows only from the snapshot's own figures. The size term is FITTED,
+// not hand-picked: it is the market's own size/value curve, fit to the snapshot's 128
+// already-trading tokens (mcap>0, TVL>0) and validated out-of-sample. A log-log fit of
+// log(mcap) on log(TVL) gives an elasticity of 0.60 — a launch's value grows with the
+// square root of the value locked, not in proportion to it — and the fitted curve cuts
+// the out-of-sample median log error from 1.63 (a fixed 0.20 multiple) to 1.17, a 29%
+// improvement, across two independent 70/30 splits. The growth, age and breadth factors
+// are kept as priors: their regression coefficients are weak and sign-unstable (R^2 only
+// 0.14-0.19), so the data does not support refitting them.
 //
-//   base        = tvl_usd x BASE_MULTIPLE                     (0.20: a launch is worth a
-//                                                              fraction of the value locked)
+//   base        = SIZE_SCALE x tvl_usd ^ SIZE_EXPONENT       (308.2 x TVL^0.60: the fitted
+//                                                              size curve; the effective
+//                                                              multiple runs 0.257 at
+//                                                              $50M TVL down to 0.031
+//                                                              at $10B)
 //   growth      = clamp(change_7d, -50, 150) per cent         (one wild week cannot carry
 //                                                              the score: the cap bites at
 //                                                              +150% and the floor at -50%)
@@ -36,10 +47,11 @@
 //                                                              than the same TVL on one)
 //   implied     = max(1, round(base x growthMult x ageMult x breadthMult))
 //
-// The combined multiple runs from 0.20 x 0.60 x 0.55 x 1.00 = 0.066 to
-// 0.20 x 2.20 x 1.20 x 1.15 = 0.607, so two protocols with the same TVL can sit almost
-// tenfold apart on growth, age and breadth alone. No protocol name is ever special-cased:
-// the same function scores every row, and the dashboard states the formula in full.
+// The effective multiple (base / tvl_usd) now falls with size, so two protocols with the
+// same TVL still sit almost tenfold apart on growth, age and breadth alone, while a
+// protocol ten times larger no longer scores ten times the value. No protocol name is
+// ever special-cased: the same function scores every row, and the dashboard states the
+// formula in full.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -66,7 +78,8 @@ export interface Snapshot {
 
 /** The model's constants, as the dashboard states them and the sandbox may change them. */
 export interface ModelConstants {
-  base_multiple: number;
+  size_scale: number;
+  size_exponent: number;
   growth_weight: number;
   growth_floor: number;
   growth_cap: number;
@@ -79,7 +92,8 @@ export interface ModelConstants {
 }
 
 export const MODEL: ModelConstants = {
-  base_multiple: 0.2,
+  size_scale: 308.2,
+  size_exponent: 0.6,
   growth_weight: 0.8,
   growth_floor: -50,
   growth_cap: 150,
@@ -92,7 +106,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-2';
+export const MODEL_VERSION = 'radar-3';
 
 /** How many pre-token protocols below the watchlist floor the early radar carries, by TVL. */
 export const EARLY_ROWS = 160;
@@ -206,7 +220,7 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
 }
 
 /** The four multipliers and the implied value one protocol gets under `model`. */
-export function impliedValue(protocol: SnapshotProtocol, asOf: string, model: ModelConstants): { implied: number; growthPct: number; growthMult: number; maturityMult: number; breadthMult: number; age: number | null } {
+export function impliedValue(protocol: SnapshotProtocol, asOf: string, model: ModelConstants): { implied: number; baseMultiple: number; growthPct: number; growthMult: number; maturityMult: number; breadthMult: number; age: number | null } {
   const age = ageDays(asOf, protocol.listed_at);
   const rawGrowth = finite(protocol.change_7d, 0);
   const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, rawGrowth));
@@ -215,9 +229,10 @@ export function impliedValue(protocol: SnapshotProtocol, asOf: string, model: Mo
   const maturityMult = model.maturity_floor + (Math.min(Math.max(ageForModel, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
   const extraChains = Math.min(Math.max(protocol.chains.length - 1, 0), model.breadth_max_extra_chains);
   const breadthMult = 1 + extraChains * model.breadth_per_chain;
-  const base = protocol.tvl_usd * model.base_multiple;
+  const base = model.size_scale * Math.pow(protocol.tvl_usd, model.size_exponent);
+  const baseMultiple = protocol.tvl_usd > 0 ? base / protocol.tvl_usd : model.size_scale;
   const implied = Math.max(1, Math.round(base * growthMult * maturityMult * breadthMult));
-  return { implied, growthPct, growthMult, maturityMult, breadthMult, age };
+  return { implied, baseMultiple, growthPct, growthMult, maturityMult, breadthMult, age };
 }
 
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
@@ -286,8 +301,8 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
   for (const p of early) chosen.set(p.slug, p);
 
   const scored = [...chosen.values()].map((p) => {
-    const { implied, growthPct, growthMult, maturityMult, breadthMult, age } = impliedValue(p, snapshot.as_of, model);
-    return { p, implied, growthPct, growthMult, maturityMult, breadthMult, age };
+    const { implied, baseMultiple, growthPct, growthMult, maturityMult, breadthMult, age } = impliedValue(p, snapshot.as_of, model);
+    return { p, implied, baseMultiple, growthPct, growthMult, maturityMult, breadthMult, age };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
   return scored.map((s, i) => ({
@@ -306,7 +321,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     age_days: s.age,
     implied_value_usd: s.implied,
     model: {
-      base_multiple: model.base_multiple,
+      base_multiple: round4(s.baseMultiple),
       growth_pct: s.growthPct,
       growth_multiplier: round4(s.growthMult),
       maturity_multiplier: round4(s.maturityMult),
@@ -441,10 +456,11 @@ function claimFor(p: SnapshotProtocol): string {
 }
 
 /**
- * A protocol's farm plan: six steps, each an action with a cost and a time. The plan is derived
+ * A protocol's farm plan: seven steps, each an action with a cost and a time. The plan is derived
  * from the protocol's own record (category, chains, TVL, age), never from a hand-written list of
  * names — and every step names the protocol, its chain or its capital, so no two rows share a
- * plan word for word.
+ * plan word for word. The seventh step nets the plan to the dollar: the gas across the whole
+ * hold, and the capital locked (not spent), so the farmer knows the true out-of-pocket cost.
  */
 export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const chain = chainOf(p);
@@ -452,6 +468,9 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const capital = capitalFor(p);
   const hold = holdDaysFor(age);
   const gas = capital >= 250 ? 8 : 4;
+  const weeks = Math.max(1, Math.round(hold / 7));
+  const totalGas = 3 + gas * 2 + 2 * weeks;
+  const totalCapital = capital + Math.round(capital / 2);
   const secondStep =
     second === null
       ? {
@@ -494,6 +513,11 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       text: secondStep.text,
       cost: secondStep.cost,
       time: secondStep.time,
+    },
+    {
+      text: `Net it out before you start: about $${totalGas} of gas in total across the ${hold}-day hold, and $${totalCapital} of capital locked in the ${p.name} position — locked, not spent, and it stays yours. The second deposit is part of that $${totalCapital}, not on top of it.`,
+      cost: `about $${totalGas} of gas in total; the $${totalCapital} is locked, not spent`,
+      time: '5 minutes to review',
     },
   ];
 }

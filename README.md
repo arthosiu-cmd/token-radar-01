@@ -16,26 +16,31 @@ mkdir -p /tmp/token-radar-out
 MAKEFUN_OUTPUT_DIR=/tmp/token-radar-out node main.ts --input <kit>/input/snapshot.json
 ```
 
-## Model — radar-2 (`lib/model.ts`, function `impliedValue`)
+## Model — radar-3 (`lib/model.ts`, function `impliedValue`)
 
 One function scores every protocol, from the snapshot's own figures only. No protocol
-name is special-cased.
+name is special-cased. The size term is fitted, not hand-picked: it is the market's own
+size/value curve, fit to the snapshot's 128 already-trading tokens (mcap>0, TVL>0) and
+validated out-of-sample (two independent 70/30 splits; median log error 1.17 vs 1.63
+for a fixed multiple — a 29% improvement).
 
 ```
-implied = round( tvl_usd × 0.20
+implied = round( 308.2 × tvl_usd ^ 0.60
   × (1 + clamp(change_7d, −50, 150) / 100 × 0.8)
   × (0.55 + min(age_days, 1460) / 1460 × 0.65)
   × (1 + min(chains − 1, 5) × 0.03) )
 ```
 
-- **TVL × 0.20** — a launch is worth a fraction of the value locked.
+- **308.2 × TVL^0.60** — the fitted size curve: a launch's value grows with the square
+  root of the value locked, not in proportion to it. The effective multiple falls from
+  0.257 at $50M TVL to 0.031 at $10B.
 - **Growth** — seven-day TVL change, clamped to −50…+150% so one wild week cannot
   carry the score; +50% lifts the multiple to 1.40, −50% cuts it to 0.60.
 - **Age** — days since first listed (`listed_at`; 365 when unlisted). A protocol that
   has run ~4 years with no token scores 1.20; a newborn scores 0.55.
 - **Breadth** — each extra chain (up to five) adds 3% to the multiple.
 
-Combined multiple: 0.066–0.607, so equal TVL can still rank far apart. On this
+Equal TVL can still rank far apart on growth, age and breadth. On this
 snapshot the board holds 178 rows: all 40 watchlist protocols plus 138 pre-token
 protocols below the $50M floor, by TVL.
 

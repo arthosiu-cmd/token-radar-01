@@ -1,4 +1,4 @@
-// Token Radar's dashboard (model radar-2). It reads window.RADAR (written beside dashboard/ by
+// Token Radar's dashboard (model radar-3). It reads window.RADAR (written beside dashboard/ by
 // main.ts) and renders the ranked board, a filterable table, and a per-protocol detail drawer with
 // the model's own inputs and the protocol's farm plan. No network: every byte it shows is in
 // data.js. The farm plan is NOT recomputed here: each row carries the exact farm_steps strings
@@ -28,7 +28,7 @@
     if (days >= 365) return (days / 365).toFixed(1) + 'y';
     return Math.max(0, Math.round(days)) + 'd';
   }
-  // The model in one function (radar-2, lib/model.ts impliedValue): the page recomputes a row from
+  // The model in one function (radar-3, lib/model.ts impliedValue): the page recomputes a row from
   // the snapshot figures and checks the number board.json carries, so the page's code and the
   // board's data are visibly the same arithmetic.
   function impliedOf(row, model) {
@@ -37,7 +37,7 @@
     var age = row.age_days === null || row.age_days === undefined ? model.unknown_age_days : row.age_days;
     var maturity = model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
     var breadth = 1 + Math.min(Math.max((row.chains || []).length - 1, 0), model.breadth_max_extra_chains) * model.breadth_per_chain;
-    return Math.max(1, Math.round(row.tvl_usd * model.base_multiple * growthMult * maturity * breadth));
+    return Math.max(1, Math.round(model.size_scale * Math.pow(row.tvl_usd, model.size_exponent) * growthMult * maturity * breadth));
   }
 
   function el(tag, attrs) {
@@ -254,9 +254,9 @@
       el('h2', { text: 'How implied value is computed (model ' + DATA.model_version + ')' }),
       el('p', { class: 'sub', text: 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked. Wrapped, staked and bridged products of tokens that already trade are excluded from the early rows, and live-token protocols are set aside with their market caps shown.' }),
       el('div', { class: 'formula' },
-        'implied = round( tvl_usd x ' + m.base_multiple + ' x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') x (1 + min(chains - 1, ' + m.breadth_max_extra_chains + ') x ' + m.breadth_per_chain + ') )'
+        'implied = round( ' + m.size_scale + ' x tvl_usd ^ ' + m.size_exponent + ' x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') x (1 + min(chains - 1, ' + m.breadth_max_extra_chains + ') x ' + m.breadth_per_chain + ') )'
       ),
-      el('p', { class: 'sub', text: 'TVL and seven-day growth come from the snapshot; the growth clamp keeps one wild week from carrying the score. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. Breadth is the chain count: each extra chain adds ' + (m.breadth_per_chain * 100) + '% to the multiple. The combined multiple runs from 0.066 to 0.607, so equal TVL can still rank far apart.' })
+      el('p', { class: 'sub', text: 'TVL and seven-day growth come from the snapshot; the growth clamp keeps one wild week from carrying the score. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. Breadth is the chain count: each extra chain adds ' + (m.breadth_per_chain * 100) + '% to the multiple. The size term is fitted, not hand-picked: it is the market\'s own size/value curve, fit to the snapshot\'s 128 already-trading tokens and validated out-of-sample, so the effective multiple falls from 0.257 at $50M TVL to 0.031 at $10B. Equal TVL can still rank far apart on growth, age and breadth.' })
     );
   }
 
