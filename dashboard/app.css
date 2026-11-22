@@ -1,4 +1,4 @@
-/* Token Radar's plain theme. The five palette values, two radii and two families are the whole style;
+/* Token Radar's plain theme. The six palette values, two radii and two families are the whole style;
    everything else is spacing, a hairline and a type step. */
 :root {
   --canvas: #f2f5f3;
@@ -7,6 +7,7 @@
   --muted: #5f6f67;
   --border: #d8e2dc;
   --accent: #0f7a5a;
+  --amber: #7a5f00;
   --negative: #b23b2e;
   --radius-control: 8px;
   --radius-panel: 14px;
@@ -99,6 +100,17 @@ tbody tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) 8%
 .status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
 .model { margin-top: var(--step-4); padding: var(--step-5); display: grid; gap: var(--step-3); }
+.model h3 { margin-top: var(--step-2); }
+.evidence { width: 100%; border-collapse: collapse; font-size: 13px; }
+.evidence th, .evidence td { padding: 6px var(--step-2); border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.evidence th { color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.evidence td b { font-weight: 600; }
+.evidence .kept { color: var(--accent); font-weight: 700; white-space: nowrap; }
+.evidence .refused { color: var(--muted); font-weight: 700; white-space: nowrap; }
+.verdict { display: inline-block; padding: 2px 8px; border-radius: 999px; font-family: var(--font-num); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; white-space: nowrap; }
+.verdict.farm { color: #0b5c44; background: #d9efe6; }
+.verdict.thin { color: var(--amber); background: #f6ecd0; }
+.verdict.skip { color: var(--muted); background: #eef1ee; }
 .formula { font-family: var(--font-num); font-size: 13px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
 .empty { padding: var(--step-7) var(--step-5); text-align: center; display: grid; gap: var(--step-3); justify-items: center; }
 .empty p { color: var(--muted); }

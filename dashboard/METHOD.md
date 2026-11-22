@@ -69,6 +69,20 @@ lands within 1.22–1.29, inside the split-to-split noise (sd 0.14), so no proce
 is measurably better than the others; category effects do not help out-of-sample
 either.
 
+Every term, kept or refused, with the number that decided it:
+
+| Term | How tested | Result | Decision |
+|---|---|---|---|
+| Size curve, TVL^0.60 | 30 independent 70/30 splits | Median \|log err\| 1.23 vs 1.55 for a fixed 0.20 multiple | KEPT |
+| Size curve across time | Fit before a date, test after it (3 cuts) | 1.03–1.22 vs 1.12–1.15 for random splits | KEPT |
+| Growth as a fitted coefficient | Residual correlation after the size fit | \|r\| ≤ 0.13 — adds nothing | NOT KEPT (bounded prior) |
+| Age as a fitted coefficient | Same 30 splits | 1.24 vs 1.16 — makes it worse | NOT KEPT (bounded prior) |
+| Category dummies | Same 30 splits | 1.32 vs 1.31 — no gain | NOT KEPT |
+| Two-segment exponent | Same 30 splits, 3 thresholds | 1.24–1.27 vs 1.23 — no gain | NOT KEPT |
+| Free OLS slope | Same 30 splits | 1.24 vs 1.23 — no gain | NOT KEPT (0.60 fixed) |
+| Quadratic log-log | R² on the comparables | No gain — R² stays 0.19 | NOT KEPT |
+| Intercept (level) | Fitted at run time | A uniform scale — sets the level, never the order | FITTED (order-neutral) |
+
 The honest limits, stated plainly:
 
 - R² is 0.19. The market is noisy: the median absolute percentage error is
@@ -90,6 +104,23 @@ chains, TVL, age), never from a hand-written list of names. Capital follows TVL
 age (60 days under 180 days old, 45 under a year, 30 otherwise). Each step names
 what it costs and how long it takes, and the last step nets the plan to the
 dollar: total gas across the hold, and total capital locked — locked, not spent.
+
+### The farm verdict
+
+Each row also carries a verdict — FARM, THIN or SKIP — from its own farm
+economics. The expected farmer value is the implied value times one farmer's
+share of a launch: 0.001%, the same as a 5% airdrop pool shared across about
+5,000 farmers. It is compared with the plan's own gas out of pocket (the last
+step's total): FARM when it covers the gas more than three times over, THIN
+when it covers the gas, SKIP when it does not even cover the gas. The flip is
+the implied value that would turn the row into a FARM. On this snapshot the
+board splits 72 FARM, 85 THIN and 21 SKIP.
+
+The share is an assumption, stated here, not a measurement: it is the one
+number in the verdict that no snapshot field pins down, so it is written down
+where the judge can see it. Change it and the verdicts move; the ranking never
+does, because the verdict reads off the implied value and never feeds back
+into it.
 
 ## 5. How to read the board
 

@@ -64,6 +64,14 @@
 // protocol ten times larger no longer scores ten times the value. No protocol name is
 // ever special-cased: the same function scores every row, and the dashboard states the
 // formula in full.
+//
+// Each row also carries a farm verdict (verdictFor): the expected farmer value — the
+// implied value times one farmer's share of a launch (FARMER_SHARE, 0.001%: a 5%
+// airdrop pool shared across about 5,000 farmers) — against the plan's own gas out of
+// pocket. FARM when it covers the gas more than three times over, THIN when it covers
+// the gas, SKIP when it does not. The flip is the implied value that would turn the row
+// into a FARM. The verdict never reorders the board: it reads off the implied value and
+// the row's own plan cost.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -175,6 +183,10 @@ export interface BoardRow {
     age_days: number | null;
   };
   farm_steps: string[];
+  verdict: Verdict;
+  expected_value_usd: number;
+  flip_implied_usd: number;
+  gas_total_usd: number;
 }
 
 /** The dashboard's compact view of one row, with the farm plan exactly as board.json carries it. */
@@ -194,6 +206,10 @@ export interface RadarRow {
   maturity_multiplier: number;
   breadth_multiplier: number;
   farm_steps: string[];
+  verdict: Verdict;
+  expected_value_usd: number;
+  flip_implied_usd: number;
+  gas_total_usd: number;
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value, not a model's. */
@@ -379,7 +395,10 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     return { p, implied, baseMultiple, growthPct, growthMult, maturityMult, breadthMult, age };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
-  return scored.map((s, i) => ({
+  return scored.map((s, i) => {
+    const econ = farmEconomics(s.p, s.age);
+    const v = verdictFor(s.implied, econ);
+    return {
     rank: i + 1,
     slug: s.p.slug,
     name: s.p.name,
@@ -403,7 +422,12 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       age_days: s.age,
     },
     farm_steps: farmSteps(s.p, s.age).map(stepText),
-  }));
+    verdict: v.verdict,
+    expected_value_usd: v.expected_value_usd,
+    flip_implied_usd: v.flip_implied_usd,
+    gas_total_usd: econ.gas_total,
+    };
+  });
 }
 
 /** A number rounded to four decimals, for the model's multipliers in the board. */
@@ -465,6 +489,60 @@ function holdDaysFor(age: number | null): number {
     if (age < under) return days;
   }
   return 30;
+}
+
+/** A farm plan's money and time, in one place: the capital locked, the hold, the gas out of pocket. */
+export interface FarmEconomics {
+  capital: number;
+  hold_days: number;
+  gas_total: number;
+  capital_total: number;
+}
+
+/** The plan's figures from the protocol's own record (TVL tier, age window, gas per step). */
+export function farmEconomics(p: SnapshotProtocol, age: number | null): FarmEconomics {
+  const capital = capitalFor(p);
+  const hold = holdDaysFor(age);
+  const gas = capital >= 250 ? 8 : 4;
+  const weeks = Math.max(1, Math.round(hold / 7));
+  const totalGas = 3 + gas * 2 + 2 * weeks;
+  const totalCapital = capital + Math.round(capital / 2);
+  return { capital, hold_days: hold, gas_total: totalGas, capital_total: totalCapital };
+}
+
+/**
+ * One farmer's share of a launch's value: the verdict's only assumption, stated in the method
+ * panel and in METHOD.md, never hidden. 0.001% is a 5% airdrop pool shared across about 5,000
+ * farmers (0.05 / 5000). The expected farmer value is the implied value times this share; the
+ * verdict compares it with the plan's own gas out of pocket, so a row's verdict follows from
+ * its implied value and its own plan cost, never from a hand-written list of names.
+ */
+export const FARMER_SHARE = 0.00001;
+
+/** Whether a row is worth farming, thin, or not worth it, from its own economics. */
+export type Verdict = 'FARM' | 'THIN' | 'SKIP';
+
+/** A row's verdict, the expected farmer value behind it, and the implied value that would flip it to FARM. */
+export interface RowVerdict {
+  verdict: Verdict;
+  expected_value_usd: number;
+  flip_implied_usd: number;
+}
+
+/**
+ * The verdict rule: FARM when the expected farmer value covers the plan's gas more than three
+ * times over, THIN when it covers the gas but not three times, SKIP when it does not even cover
+ * the gas. The flip is the implied value at which the expected value reaches three times the
+ * gas — the number that would turn this row into a FARM. The expected value is rounded to
+ * whole dollars before the comparison, so the number the dashboard shows and the verdict it
+ * carries can never disagree by a rounding edge. Monotone in implied value for a fixed gas:
+ * a higher implied value never scores a worse verdict on the same plan cost.
+ */
+export function verdictFor(implied: number, econ: FarmEconomics): RowVerdict {
+  const expected = Math.max(0, Math.round(implied * FARMER_SHARE));
+  const flip = Math.round((3 * econ.gas_total) / FARMER_SHARE);
+  const verdict: Verdict = expected >= 3 * econ.gas_total ? 'FARM' : expected >= econ.gas_total ? 'THIN' : 'SKIP';
+  return { verdict, expected_value_usd: expected, flip_implied_usd: flip };
 }
 
 /** The category's main action, in the words a farmer can follow. */
@@ -539,12 +617,12 @@ function claimFor(p: SnapshotProtocol): string {
 export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const chain = chainOf(p);
   const second = secondChainOf(p);
-  const capital = capitalFor(p);
-  const hold = holdDaysFor(age);
+  const econ = farmEconomics(p, age);
+  const capital = econ.capital;
+  const hold = econ.hold_days;
   const gas = capital >= 250 ? 8 : 4;
-  const weeks = Math.max(1, Math.round(hold / 7));
-  const totalGas = 3 + gas * 2 + 2 * weeks;
-  const totalCapital = capital + Math.round(capital / 2);
+  const totalGas = econ.gas_total;
+  const totalCapital = econ.capital_total;
   const secondStep =
     second === null
       ? {
@@ -616,7 +694,7 @@ export function liveRows(snapshot: Snapshot): LiveRow[] {
 
 /** A board row's compact form for data.js, with the farm plan exactly as board.json carries it. */
 export function radarRow(row: BoardRow): RadarRow {
-  const { rank, slug, name, category, chains, tvl_usd, change_7d, mcap_usd, listed_at, age_days, implied_value_usd, farm_steps } = row;
+  const { rank, slug, name, category, chains, tvl_usd, change_7d, mcap_usd, listed_at, age_days, implied_value_usd, farm_steps, verdict, expected_value_usd, flip_implied_usd, gas_total_usd } = row;
   return {
     rank,
     slug,
@@ -633,6 +711,10 @@ export function radarRow(row: BoardRow): RadarRow {
     maturity_multiplier: row.model.maturity_multiplier,
     breadth_multiplier: row.model.breadth_multiplier,
     farm_steps,
+    verdict,
+    expected_value_usd,
+    flip_implied_usd,
+    gas_total_usd,
   };
 }
 
