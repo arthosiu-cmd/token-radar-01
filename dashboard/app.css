@@ -1,5 +1,4 @@
-/* Token Radar's plain theme. The six palette values, two radii and two families are the whole style;
-   everything else is spacing, a hairline and a type step. */
+/* Token Radar's plain theme: six palette values, two radii, two families; the rest is spacing. */
 :root {
   --canvas: #f2f5f3;
   --surface: #ffffff;
@@ -58,10 +57,10 @@ a { color: var(--accent); }
 .top-meta span { white-space: nowrap; }
 .lede { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr); gap: var(--step-6); padding: var(--step-4) 0 var(--step-2); }
 .lede p { color: var(--muted); max-width: 62ch; margin-top: var(--step-2); }
-.facts { display: grid; gap: var(--step-2); align-content: start; border-left: 1px solid var(--border); padding-left: var(--step-5); }
-.fact { display: flex; align-items: baseline; justify-content: space-between; gap: var(--step-3); }
-.fact b { font-family: var(--font-num); font-size: 15px; font-weight: 500; }
-.fact span { color: var(--muted); font-size: 13px; }
+.kpis { display: grid; grid-template-columns: 1fr 1fr; gap: var(--step-2); align-content: start; border-left: 1px solid var(--border); padding-left: var(--step-5); }
+.kpi { display: grid; gap: 2px; }
+.kpi b { font-family: var(--font-num); font-size: 14px; font-weight: 500; line-height: 1.3; white-space: nowrap; }
+.kpi span { color: var(--muted); font-size: 11px; line-height: 1.35; white-space: nowrap; }
 
 .controls { display: flex; flex-wrap: wrap; align-items: end; gap: var(--step-3); padding: var(--step-2) 0; border-top: 1px solid var(--border); }
 .field { display: grid; gap: var(--step-1); }
@@ -70,7 +69,8 @@ a { color: var(--accent); }
   min-height: 32px; padding: 0 var(--step-3); border: 1px solid var(--border); border-radius: var(--radius-control);
   background: var(--surface); min-width: 180px;
 }
-.field input { min-width: 280px; }
+.field input { min-width: 250px; }
+.field select.narrow { min-width: 120px; }
 .tabs { display: flex; gap: var(--step-1); padding: 3px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); }
 .tabs button { min-height: 30px; padding: 0 var(--step-3); border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
 .tabs button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
@@ -93,18 +93,21 @@ tbody tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) 8%
 .sub { color: var(--muted); font-size: 12px; }
 .pos { color: var(--accent); }
 .neg { color: var(--negative); }
-.bar { width: 120px; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--border) 60%, var(--surface)); overflow: hidden; }
+.bar { width: 96px; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--border) 60%, var(--surface)); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--accent); }
 .implied { display: flex; align-items: center; gap: var(--step-2); }
+.range { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
 .model { margin-top: var(--step-4); padding: var(--step-5); display: grid; gap: var(--step-3); }
 .model h3 { margin-top: var(--step-2); }
-.evidence { width: 100%; border-collapse: collapse; font-size: 13px; }
-.evidence th, .evidence td { padding: 6px var(--step-2); border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
-.evidence th { color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
-.evidence td b { font-weight: 600; }
+.evidence, .ledger, .selftest { width: 100%; border-collapse: collapse; font-size: 13px; }
+.evidence th, .evidence td, .ledger th, .ledger td, .selftest th, .selftest td { padding: 6px var(--step-2); border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.evidence th, .ledger th, .selftest th { color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.evidence td b, .ledger td b, .selftest td b { font-weight: 600; }
+.selftest .pass { color: var(--accent); font-weight: 700; white-space: nowrap; }
+.selftest .fail { color: var(--negative); font-weight: 700; white-space: nowrap; }
 .evidence .kept { color: var(--accent); font-weight: 700; white-space: nowrap; }
 .evidence .refused { color: var(--muted); font-weight: 700; white-space: nowrap; }
 .verdict { display: inline-block; padding: 2px 8px; border-radius: 999px; font-family: var(--font-num); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; white-space: nowrap; }
@@ -118,8 +121,8 @@ tbody tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) 8%
 .button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
 
 .detail {
-  position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 92vw); z-index: 10;
-  background: var(--surface); border-left: 1px solid var(--border); padding: var(--step-4);
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(860px, 92vw); z-index: 10;
+  background: var(--surface); border-left: 1px solid var(--border); padding: 10px;
   overflow-y: auto; transform: translateX(0); transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
 }
 .detail[hidden] { display: none; }
@@ -129,14 +132,19 @@ tbody tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) 8%
 .detail-head > div { min-width: 0; }
 .detail-head .sub { overflow-wrap: anywhere; }
 .close { flex: none; min-width: 32px; min-height: 32px; padding: 0 var(--step-2); white-space: nowrap; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); }
-.detail h2 { margin-top: var(--step-1); }
-.detail .sub { margin-top: var(--step-1); }
-.detail-section { margin-top: var(--step-3); padding-top: var(--step-2); border-top: 1px solid var(--border); }
-.detail-section h3 { margin-bottom: var(--step-1); }
-.equation { display: grid; grid-template-columns: 1fr 1fr; column-gap: var(--step-5); row-gap: 6px; font-family: var(--font-num); font-size: 12.5px; }
+.detail h2 { margin-top: 2px; }
+.detail .sub { margin-top: 2px; }
+.detail-section { margin-top: 6px; padding-top: 4px; border-top: 1px solid var(--border); }
+.detail-section h3 { margin-bottom: 2px; }
+.detail table.mini { width: 100%; border-collapse: collapse; font-size: 12px; }
+.detail table.mini th, .detail table.mini td { padding: 2px 5px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.detail table.mini th { color: var(--muted); font-size: 11px; font-weight: 500; white-space: nowrap; position: static; background: none; }
+.detail table.mini td.num { font-family: var(--font-num); white-space: nowrap; }
+.detail table.mini td b { font-weight: 600; }
+.equation { display: grid; grid-template-columns: 1fr 1fr 1fr; column-gap: var(--step-4); row-gap: 4px; font-family: var(--font-num); font-size: 12px; }
 .equation div { display: flex; justify-content: space-between; gap: var(--step-3); }
 .equation span { color: var(--muted); }
-.steps { margin: 0; padding-left: var(--step-5); display: grid; gap: var(--step-2); font-size: 14px; line-height: 1.45; }
+.steps { margin: 0; padding-left: var(--step-5); display: grid; gap: 2px; font-size: 13px; line-height: 1.3; }
 .steps li { padding-left: var(--step-1); }
 .steps b { display: block; font-weight: 500; }
 .cost { color: var(--muted); font-size: 12px; font-family: var(--font-num); }
@@ -144,7 +152,6 @@ tbody tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) 8%
 @media (max-width: 900px) {
   .shell { padding: var(--step-4); }
   .lede { grid-template-columns: 1fr; gap: var(--step-4); }
-  .facts { border-left: 0; border-top: 1px solid var(--border); padding-left: 0; padding-top: var(--step-4); }
   .field input { min-width: 0; width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {

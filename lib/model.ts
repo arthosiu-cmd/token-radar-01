@@ -1,10 +1,10 @@
 // The token radar's model: one snapshot of the protocol universe in, one ranked board out.
 //
 // The board covers every slug in the snapshot's watchlist (the floor, never a ceiling) and adds
-// pre-token protocols below the watchlist floor: the early rows the radar exists to find. A protocol
-// is pre-token when its index entry records no token (no market cap, no CoinGecko id, no symbol).
-// The snapshot's live-token protocols are kept apart and shown as the market's own values, never
-// mixed into the ranked board.
+// every rankable pre-token protocol outside the watchlist, by TVL, capped at EARLY_ROWS: the
+// early rows the radar exists to find. A protocol is pre-token when its index entry records
+// no token (no market cap, no CoinGecko id, no symbol). The snapshot's live-token protocols
+// are kept apart and shown as the market's own values, never mixed into the ranked board.
 //
 // A wrapped, staked or bridged product of a token that already trades is not a launch waiting to
 // happen, so the early radar applies the watchlist's own exclusion to its extra rows too: no
@@ -71,7 +71,9 @@
 // pocket. FARM when it covers the gas more than three times over, THIN when it covers
 // the gas, SKIP when it does not. The flip is the implied value that would turn the row
 // into a FARM. The verdict never reorders the board: it reads off the implied value and
-// the row's own plan cost.
+// the row's own plan cost. Each row also carries its net if the token launches — the expected farmer value minus
+// the plan's gas, and the same net per hour of active farm work (the hold is waiting, not work) — and its P25–P75
+// value range, from the fitted curve's own residuals: the value's uncertainty, not a second model.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -143,9 +145,12 @@ export interface SizeFit {
   size_exponent: number;
   comparables: number;
   fitted: boolean;
+  /** The P25 / P75 multipliers of the fit's residuals, when the board computed them. */
+  p25_mult?: number;
+  p75_mult?: number;
 }
 
-/** How many pre-token protocols below the watchlist floor the early radar carries, by TVL. */
+/** How many rankable pre-token protocols outside the watchlist the early radar carries, by TVL. */
 export const EARLY_ROWS = 160;
 
 /** How many live-token protocols the Live token view carries, by market cap. */
@@ -187,6 +192,17 @@ export interface BoardRow {
   expected_value_usd: number;
   flip_implied_usd: number;
   gas_total_usd: number;
+  /** The farmer's net if the token launches: expected farmer value minus the plan's gas. */
+  net_value_usd: number;
+  /** The net per hour of active farm work, in dollars, rounded to two decimals. */
+  net_per_hour_usd: number;
+  /** The P25–P75 range of the implied value, from the fit's own residuals. */
+  range_low_usd: number;
+  range_high_usd: number;
+  /** The plan's active work, in minutes, from the steps' own times (see farmEconomics). */
+  work_minutes: number;
+  /** The plan's hold, in days, from the protocol's age (see farmEconomics). */
+  hold_days: number;
 }
 
 /** The dashboard's compact view of one row, with the farm plan exactly as board.json carries it. */
@@ -210,6 +226,12 @@ export interface RadarRow {
   expected_value_usd: number;
   flip_implied_usd: number;
   gas_total_usd: number;
+  net_value_usd: number;
+  net_per_hour_usd: number;
+  range_low_usd: number;
+  range_high_usd: number;
+  work_minutes: number;
+  hold_days: number;
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value, not a model's. */
@@ -223,7 +245,38 @@ export interface LiveRow {
   change_7d: number | null;
 }
 
+/** One priced comparable, compact: the drawer finds a row's nearest traded neighbours from these. */
+export interface ComparableRow {
+  slug: string;
+  name: string;
+  category: string | null;
+  tvl_usd: number;
+  mcap_usd: number;
+}
+
+/** A verdict split: how many rows are FARM, THIN and SKIP under one assumed farmer share. */
+export interface VerdictSplit {
+  FARM: number;
+  THIN: number;
+  SKIP: number;
+}
+
 /** Everything the dashboard needs: the board, the live set, and the model it runs. */
+/** Every protocol in the snapshot, in exactly one group: the board's coverage as a partition, not an assertion. Ranked + comparables + token-no-cap + excluded-by-rule + above-floor-not-watched + below-floor-beyond-cap always sums to the snapshot's protocol count, on any snapshot: a protocol is either on the board, or it trades (a priced comparable, or a token with no usable cap), or it is pre-token and off the board (excluded by rule, above the floor and not watched, or below the floor past the early cap). */
+export interface Ledger {
+  total: number;
+  ranked: number;
+  watchlist: number;
+  early: number;
+  comparables: number;
+  token_no_cap: number;
+  token_no_cap_no_mcap: number;
+  token_no_cap_zero_mcap: number;
+  excluded_by_rule: number;
+  above_floor_not_watched: number;
+  below_floor_beyond_cap: number;
+}
+
 export interface RadarData {
   as_of: string;
   source: string;
@@ -231,12 +284,19 @@ export interface RadarData {
   model: ModelConstants;
   model_version: string;
   fit: SizeFit;
+  /** One farmer's share of a launch, the verdict's only assumption (see FARMER_SHARE). */
+  farmer_share: number;
+  /** The verdict split at half and at double the assumed farmer share: the verdict's sensitivity. */
+  verdict_sensitivity: { half: VerdictSplit; double: VerdictSplit };
   watchlist_size: number;
   board_size: number;
   early_size: number;
   live_size: number;
+  ledger: Ledger;
   rows: RadarRow[];
   live: LiveRow[];
+  /** The priced comparables, for the drawer's nearest-traded-neighbours anchors. */
+  comparables: ComparableRow[];
 }
 
 /** Why the snapshot is not one this model can score. */
@@ -325,6 +385,27 @@ export function fitSizeCurve(snapshot: Snapshot): SizeFit {
   return { size_scale: scale, size_exponent: SIZE_EXPONENT, comparables: used, fitted: true };
 }
 
+/**
+ * The P25 and P75 multipliers of the size curve's own residuals: for each comparable,
+ * log(mcap) minus the fitted log curve at its TVL, then the 25th and 75th percentiles by
+ * nearest-rank on the sorted residuals, exponentiated back to multipliers. A row's
+ * implied value times these is its P25–P75 range: the value's own uncertainty, computed
+ * from the same fit that priced it — never a second model, never a hardcoded band.
+ * With no comparables the range is the point itself (both multipliers 1).
+ */
+export function residualMultipliers(snapshot: Snapshot, model: ModelConstants): { p25: number; p75: number } {
+  const comps = comparables(snapshot);
+  if (comps.length === 0) return { p25: 1, p75: 1 };
+  const residuals = comps
+    .map((p) => Math.log(p.mcap_usd!) - (Math.log(model.size_scale) + model.size_exponent * Math.log(p.tvl_usd)))
+    .sort((a, b) => a - b);
+  const at = (q: number): number => {
+    const index = Math.min(residuals.length - 1, Math.max(0, Math.ceil(q * residuals.length) - 1));
+    return residuals[index]!;
+  };
+  return { p25: Math.exp(at(0.25)), p75: Math.exp(at(0.75)) };
+}
+
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
 const VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
 
@@ -382,10 +463,10 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     const p = index.get(slug);
     if (p !== undefined) chosen.set(slug, p);
   }
-  // The early radar: pre-token protocols below the watchlist floor, by TVL, capped. Never a replacement
-  // for a watchlist row: a chosen protocol stays chosen.
+  // The early radar: every rankable pre-token protocol outside the watchlist, by TVL, capped.
+  // Never a replacement for a watchlist row: a chosen protocol stays chosen.
   const early = snapshot.protocols
-    .filter((p) => !chosen.has(p.slug) && isRankable(p) && p.tvl_usd < snapshot.floor_usd)
+    .filter((p) => !chosen.has(p.slug) && isRankable(p))
     .sort((a, b) => b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0))
     .slice(0, EARLY_ROWS);
   for (const p of early) chosen.set(p.slug, p);
@@ -395,9 +476,15 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     return { p, implied, baseMultiple, growthPct, growthMult, maturityMult, breadthMult, age };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
+  // The P25–P75 multipliers of the fit's own residuals, for every row's value range.
+  const mult = residualMultipliers(snapshot, model);
   return scored.map((s, i) => {
     const econ = farmEconomics(s.p, s.age);
     const v = verdictFor(s.implied, econ);
+    // The net if the token launches: the expected farmer value minus the plan's gas, and
+    // the same net per hour of active farm work (the hold is waiting, not work).
+    const net = v.expected_value_usd - econ.gas_total;
+    const netPerHour = Math.round((net / (econ.work_minutes / 60)) * 100) / 100;
     return {
     rank: i + 1,
     slug: s.p.slug,
@@ -426,6 +513,12 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     expected_value_usd: v.expected_value_usd,
     flip_implied_usd: v.flip_implied_usd,
     gas_total_usd: econ.gas_total,
+    net_value_usd: net,
+    net_per_hour_usd: netPerHour,
+    range_low_usd: Math.max(1, Math.round(s.implied * mult.p25)),
+    range_high_usd: Math.max(1, Math.round(s.implied * mult.p75)),
+    work_minutes: econ.work_minutes,
+    hold_days: econ.hold_days,
     };
   });
 }
@@ -497,6 +590,10 @@ export interface FarmEconomics {
   hold_days: number;
   gas_total: number;
   capital_total: number;
+  /** The plan's active work in minutes, from the steps' own times — step 1: 5, step 2: 15,
+   * step 3: 10 a week for every week of the hold, step 5: 10, step 6: 15 on a second chain
+   * else 10, step 7: 5. The hold itself (step 4) is waiting, not work, and is not counted. */
+  work_minutes: number;
 }
 
 /** The plan's figures from the protocol's own record (TVL tier, age window, gas per step). */
@@ -507,7 +604,8 @@ export function farmEconomics(p: SnapshotProtocol, age: number | null): FarmEcon
   const weeks = Math.max(1, Math.round(hold / 7));
   const totalGas = 3 + gas * 2 + 2 * weeks;
   const totalCapital = capital + Math.round(capital / 2);
-  return { capital, hold_days: hold, gas_total: totalGas, capital_total: totalCapital };
+  const workMinutes = 5 + 15 + 10 * weeks + 10 + (secondChainOf(p) === null ? 10 : 15) + 5;
+  return { capital, hold_days: hold, gas_total: totalGas, capital_total: totalCapital, work_minutes: workMinutes };
 }
 
 /**
@@ -538,9 +636,9 @@ export interface RowVerdict {
  * carries can never disagree by a rounding edge. Monotone in implied value for a fixed gas:
  * a higher implied value never scores a worse verdict on the same plan cost.
  */
-export function verdictFor(implied: number, econ: FarmEconomics): RowVerdict {
-  const expected = Math.max(0, Math.round(implied * FARMER_SHARE));
-  const flip = Math.round((3 * econ.gas_total) / FARMER_SHARE);
+export function verdictFor(implied: number, econ: FarmEconomics, share: number = FARMER_SHARE): RowVerdict {
+  const expected = Math.max(0, Math.round(implied * share));
+  const flip = Math.round((3 * econ.gas_total) / share);
   const verdict: Verdict = expected >= 3 * econ.gas_total ? 'FARM' : expected >= econ.gas_total ? 'THIN' : 'SKIP';
   return { verdict, expected_value_usd: expected, flip_implied_usd: flip };
 }
@@ -694,7 +792,7 @@ export function liveRows(snapshot: Snapshot): LiveRow[] {
 
 /** A board row's compact form for data.js, with the farm plan exactly as board.json carries it. */
 export function radarRow(row: BoardRow): RadarRow {
-  const { rank, slug, name, category, chains, tvl_usd, change_7d, mcap_usd, listed_at, age_days, implied_value_usd, farm_steps, verdict, expected_value_usd, flip_implied_usd, gas_total_usd } = row;
+  const { rank, slug, name, category, chains, tvl_usd, change_7d, mcap_usd, listed_at, age_days, implied_value_usd, farm_steps, verdict, expected_value_usd, flip_implied_usd, gas_total_usd, net_value_usd, net_per_hour_usd, range_low_usd, range_high_usd, work_minutes, hold_days } = row;
   return {
     rank,
     slug,
@@ -715,6 +813,12 @@ export function radarRow(row: BoardRow): RadarRow {
     expected_value_usd,
     flip_implied_usd,
     gas_total_usd,
+    net_value_usd,
+    net_per_hour_usd,
+    range_low_usd,
+    range_high_usd,
+    work_minutes,
+    hold_days,
   };
 }
 
@@ -729,19 +833,59 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
   const live = liveRows(snapshot);
   const watchlist = new Set(snapshot.watchlist);
   const early = board.filter((r) => !watchlist.has(r.slug)).length;
+  // The ledger: every protocol in exactly one group, computed from the snapshot with the
+  // same functions the board uses — never hardcoded, so it stays true on any input.
+  const boardSlugs = new Set(board.map((r) => r.slug));
+  const comps = comparables(snapshot);
+  const tradedNoCap = snapshot.protocols.filter((p) => !isPreToken(p) && comps.indexOf(p) < 0);
+  const preOffBoard = snapshot.protocols.filter((p) => isPreToken(p) && !boardSlugs.has(p.slug));
+  const ledger: Ledger = {
+    total: snapshot.protocols.length,
+    ranked: board.length,
+    watchlist: snapshot.watchlist.length,
+    early,
+    comparables: comps.length,
+    token_no_cap: tradedNoCap.length,
+    token_no_cap_no_mcap: tradedNoCap.filter((p) => p.mcap_usd === null).length,
+    token_no_cap_zero_mcap: tradedNoCap.filter((p) => p.mcap_usd !== null && p.mcap_usd <= 0).length,
+    excluded_by_rule: preOffBoard.filter((p) => !isRankable(p)).length,
+    above_floor_not_watched: preOffBoard.filter((p) => isRankable(p) && p.tvl_usd >= snapshot.floor_usd).length,
+    below_floor_beyond_cap: preOffBoard.filter((p) => isRankable(p) && p.tvl_usd < snapshot.floor_usd).length,
+  };
+  // The P25–P75 multipliers of the effective fit, and the verdict split at half and at
+  // double the assumed farmer share — both computed from the snapshot, never hardcoded.
+  const mult = residualMultipliers(snapshot, effective);
+  const bySlugIndex = bySlug(snapshot.protocols);
+  const splitAt = (share: number): VerdictSplit => {
+    const split: VerdictSplit = { FARM: 0, THIN: 0, SKIP: 0 };
+    for (const row of board) {
+      const p = bySlugIndex.get(row.slug);
+      if (p === undefined) continue;
+      split[verdictFor(row.implied_value_usd, farmEconomics(p, row.age_days), share).verdict]++;
+    }
+    return split;
+  };
+  const sensitivity = { half: splitAt(FARMER_SHARE / 2), double: splitAt(FARMER_SHARE * 2) };
+  const fitOut: SizeFit = refit
+    ? { ...fit, p25_mult: mult.p25, p75_mult: mult.p75 }
+    : { size_scale: effective.size_scale, size_exponent: effective.size_exponent, comparables: fit.comparables, fitted: false, p25_mult: mult.p25, p75_mult: mult.p75 };
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
     floor_usd: snapshot.floor_usd,
     model: effective,
     model_version: MODEL_VERSION,
-    fit: refit ? fit : { size_scale: effective.size_scale, size_exponent: effective.size_exponent, comparables: fit.comparables, fitted: false },
+    fit: fitOut,
+    farmer_share: FARMER_SHARE,
+    verdict_sensitivity: sensitivity,
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
     early_size: early,
     live_size: live.length,
+    ledger,
     rows: board.map(radarRow),
     live,
+    comparables: comps.map((p) => ({ slug: p.slug, name: p.name, category: p.category, tvl_usd: p.tvl_usd, mcap_usd: p.mcap_usd! })),
   };
   return { board, radar };
 }
